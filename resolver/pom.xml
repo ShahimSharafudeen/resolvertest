@@ -4,7 +4,7 @@
     <parent>
         <groupId>com.facebook.airlift.resolver</groupId>
         <artifactId>resolver-root</artifactId>
-        <version>1.8-SNAPSHOT</version>
+        <version>1.8-wxd</version>
     </parent>
 
     <artifactId>resolver</artifactId>
