@@ -333,7 +333,7 @@ public class ArtifactResolver
                     .setClassWorld(classWorld)
                     .setRealm(null)
                     .setAutoWiring(true)
-                    .setClassPathScanning(PlexusConstants.SCANNING_CACHE)
+                    .setClassPathScanning(PlexusConstants.SCANNING_INDEX)
                     .setName("maven");
 
             DefaultPlexusContainer container = new DefaultPlexusContainer(cc);
