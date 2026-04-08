@@ -327,7 +327,11 @@ public class ArtifactResolver
     {
         // TODO: move off Plexus DI, use Sisu instead
         try {
-            ClassWorld classWorld = new ClassWorld("plexus.core", Thread.currentThread().getContextClassLoader());
+            // Fix for Spark and other isolated classloader environments:
+            // Select an effective ClassLoader by checking multiple candidates to ensure Maven Resolver/Plexus components are discoverable at runtime.
+            ClassLoader classLoader = getEffectiveClassLoader();
+
+            ClassWorld classWorld = new ClassWorld("plexus.core", classLoader);
 
             ContainerConfiguration cc = new DefaultContainerConfiguration()
                     .setClassWorld(classWorld)
@@ -348,6 +352,77 @@ public class ArtifactResolver
         }
         catch (PlexusContainerException e) {
             throw new RuntimeException("Error loading Maven system", e);
+        }
+    }
+
+    /**
+     * Determine the most appropriate ClassLoader for initializing Maven Resolver / Plexus components.
+     *
+     * In distributed or containerized environments (e.g., Spark, Docker), the Thread Context ClassLoader
+     * may not have visibility into all required Maven components due to classloader isolation. This can
+     * lead to ServiceLoader or Plexus lookup failures (e.g., RepositorySystem initialization errors).
+     *
+     * This method attempts multiple classloaders in a deterministic order and selects the first one
+     * that can successfully load required Maven components:
+     *
+     * Priority order:
+     *   1) ClassLoader that loaded this class
+     *      - Most reliable in shaded, embedded, or isolated runtime environments (e.g., Spark executors)
+     *
+     *   2) Thread Context ClassLoader
+     *      - Standard mechanism in typical JVM / Maven execution environments
+     *
+     *   3) System ClassLoader
+     *      - Fallback for environments where dependencies are available globally
+     *
+     * If none of the candidates pass validation, the method returns the classloader that loaded this
+     * class as the safest default, since it is most likely to contain the resolver dependencies in
+     * embedded execution scenarios.
+     *
+     * This defensive selection logic helps ensure consistent component discovery across different
+     * runtime environments without relying on a single classloader assumption.
+     *
+     * @return the classloader to use for Maven component discovery
+     */
+    private static ClassLoader getEffectiveClassLoader()
+    {
+        ClassLoader thisClassLoader = ArtifactResolver.class.getClassLoader();
+        if (thisClassLoader != null && canLoadMavenComponents(thisClassLoader)) {
+            return thisClassLoader;
+        }
+
+        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+        if (contextClassLoader != null && canLoadMavenComponents(contextClassLoader)) {
+            return contextClassLoader;
+        }
+
+        ClassLoader systemClassLoader = ClassLoader.getSystemClassLoader();
+        if (systemClassLoader != null && canLoadMavenComponents(systemClassLoader)) {
+            return systemClassLoader;
+        }
+
+        return thisClassLoader != null ? thisClassLoader : contextClassLoader;
+    }
+
+    /**
+     * Verify whether the provided ClassLoader has visibility into essential Maven
+     * and Plexus components required for resolver initialization.
+     *
+     * @param classLoader the ClassLoader to validate
+     * @return true if required Maven and Plexus classes are visible to the ClassLoader;
+     * false otherwise
+     */
+    private static boolean canLoadMavenComponents(ClassLoader classLoader)
+    {
+        try {
+            // Verify visibility of a core Maven repository component
+            Class.forName("org.apache.maven.repository.RepositorySystem", false, classLoader);
+            // Verify visibility of the Plexus container used for component discovery
+            Class.forName("org.codehaus.plexus.DefaultPlexusContainer", false, classLoader);
+            return true;
+        }
+        catch (ClassNotFoundException e) {
+            return false;
         }
     }
 }
