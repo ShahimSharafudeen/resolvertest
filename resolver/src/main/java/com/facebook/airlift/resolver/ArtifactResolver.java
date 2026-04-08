@@ -327,7 +327,11 @@ public class ArtifactResolver
     {
         // TODO: move off Plexus DI, use Sisu instead
         try {
-            ClassWorld classWorld = new ClassWorld("plexus.core", Thread.currentThread().getContextClassLoader());
+            // Fix for Spark/isolated classloader environments:
+            // Try multiple classloaders in order of preference to ensure Maven components are discoverable
+            ClassLoader classLoader = getEffectiveClassLoader();
+            
+            ClassWorld classWorld = new ClassWorld("plexus.core", classLoader);
 
             ContainerConfiguration cc = new DefaultContainerConfiguration()
                     .setClassWorld(classWorld)
@@ -348,6 +352,61 @@ public class ArtifactResolver
         }
         catch (PlexusContainerException e) {
             throw new RuntimeException("Error loading Maven system", e);
+        }
+    }
+
+    /**
+     * Get the most appropriate classloader for Maven component discovery.
+     * This method tries multiple classloaders to handle environments like Spark
+     * where the thread context classloader may not have visibility to Maven components.
+     *
+     * @return the classloader to use for Maven component discovery
+     */
+    private static ClassLoader getEffectiveClassLoader()
+    {
+        // Strategy: Try classloaders in order of likelihood to have Maven components visible
+        
+        // 1. Try the classloader that loaded this class (most reliable in isolated environments)
+        ClassLoader thisClassLoader = ArtifactResolver.class.getClassLoader();
+        if (thisClassLoader != null && canLoadMavenComponents(thisClassLoader)) {
+            return thisClassLoader;
+        }
+        
+        // 2. Try thread context classloader (works in standard Maven/JVM environments)
+        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+        if (contextClassLoader != null && canLoadMavenComponents(contextClassLoader)) {
+            return contextClassLoader;
+        }
+        
+        // 3. Try system classloader as fallback
+        ClassLoader systemClassLoader = ClassLoader.getSystemClassLoader();
+        if (systemClassLoader != null && canLoadMavenComponents(systemClassLoader)) {
+            return systemClassLoader;
+        }
+        
+        // 4. Last resort: use the classloader that loaded this class (even if check failed)
+        // This gives the best chance in isolated environments
+        return thisClassLoader != null ? thisClassLoader : contextClassLoader;
+    }
+
+    /**
+     * Check if a classloader can load critical Maven components.
+     * This helps identify the correct classloader in complex environments.
+     *
+     * @param classLoader the classloader to test
+     * @return true if Maven components are accessible
+     */
+    private static boolean canLoadMavenComponents(ClassLoader classLoader)
+    {
+        try {
+            // Try to load a core Maven class that must be present
+            Class.forName("org.apache.maven.repository.RepositorySystem", false, classLoader);
+            // Try to load a Plexus class
+            Class.forName("org.codehaus.plexus.DefaultPlexusContainer", false, classLoader);
+            return true;
+        }
+        catch (ClassNotFoundException e) {
+            return false;
         }
     }
 }
